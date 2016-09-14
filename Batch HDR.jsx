@@ -40,11 +40,11 @@ $.evalFile( g_ScriptPath );
 //default settings:
 mergeToHDR.useAlignment = false;
 mergeToHDR.useACRToning = false;
-var numberOfBrackets = 3;
+var numberOfBrackets = 9;
 var userCanceled = false;
 var sourceFolder;
 var outputFolder;
-var saveType = "JPEG";
+var saveType = "OpenEXR";
 var jpegQuality = 10;
 var progress;
 var statusText;
@@ -75,92 +75,102 @@ function main()
     promptUser();
     
     //make sure user didn't cancel
-    if(sourceFolder != null && outputFolder != null && sourceFolder.exists && outputFolder.exists && numberOfBrackets > 0)
+    if(sourceFolder != null && outputFolder != null && sourceFolder.exists && outputFolder.exists)
     {
+        // Editing script to work on subfolders within the selected folder.
+        // basically: make a hdr image for each set of images in the subdirectories
         initializeProgress();
-        var files =  sourceFolder.getFiles(fileMask);
-        files.sort();
-        var currentFileList = new Array();
 
-        var numberOfFiles = files.length;
+        var folders = sourceFolder.getFiles();
+
+        for (var index = 0; index < folders.length; index++) {
+            // collect the files in the folder
+            var currentFileList = new Array();
+            if (folders[index] instanceof Folder) {
+                var currentFiles = folders[index].getFiles();
+
+                for (var i = 0; i < currentFiles.length; i++) {
+                    if (currentFiles[i] instanceof File) {
+                        currentFileList.push(currentFiles[i]);
+                    }
+                }
+            }
+
+            var start = new Date();
+            progress.value = 100 * index / folders.length;
+            
+            //currentFileList.push(files[index]);
+            
+            if(userCanceled) break;
+            if(currentFileList.length > 1)
+            {
+                statusText.text = "Merging files in folder "+ index + " of "+ folders.length + estTimeRemaining;
+                //for braketed exposures use the mergeToHDR script to merge the files into a single 32 bit image
+                mergeToHDR.outputBitDepth= 32;
+                
+                mergeToHDR.mergeFilesToHDR( currentFileList, mergeToHDR.useAlignment, hdrDeghosting );
+            }
+            else {
+                // non-fatal error
+                statusText.text = folders[index] + " is not a folder. Skipping...";
+                continue;
+                //alert("Current file list is empty.\n" + currentFileList);
+                //break;
+            }
+
+            progress.value = 100 * (index+1) / folders.length;
+            if(userCanceled) break;
+            try
+            {
+                if(app.activeDocument != null && outputBitDepth < 32)
+                {
+                    //apply the actual tone mapping to the HDR image to get it back down to 8 bits
+                    doHDRToning();
+                }
+            }
+            catch(error)
+            {
+                alert(error + "\nCheck number of files in source folder");
+                break;
+            }
+            
+            //save the result and close
+            //TODO: add leading zeros to index in filename
+            
+            statusText.text = "Saving result "+(index)+" of "+ folders.length + estTimeRemaining;
+
+            if(userCanceled) break;
+            var outFile = outputFolder.absoluteURI + "/" + folders[index].name;
+            doSaveFile(outFile);
+            
+            //doSaveFile(outputFolder.absoluteURI + "/" + outputFilename + ZeroPad(Math.round((index + 1)/numberOfBrackets), zeroPadding) );
+            
+            activeDocument.close(SaveOptions.DONOTSAVECHANGES);
+            
+            //reset our file list
+            currentFileList = new Array();
+            
+            //calculate time remaining
+            var end = new Date();
+            var timeElapsed = end.getTime() - start.getTime();
+            var mins = timeElapsed / 60000 * (folders.length - index - 1);
+            estTimeRemaining = " | Remaining: " + ZeroPad((mins / 60).toFixed(0),2) + ":" + ZeroPad((mins % 60).toFixed(0),2);
+        }
+
+        //var files =  sourceFolder.getFiles(fileMask);
+        //files.sort();
+        //var currentFileList = new Array();
+
+        //var numberOfFiles = files.length;
 
         /* convert numberOfFiles to a string to make sure zeropaddingis high enough to cover all files */
 
-        var numberOfFilesStr = "" + (numberOfFiles / numberOfBrackets);
-        if (zeroPadding > 0 && zeroPadding < numberOfFilesStr.length)
-        {
-            zeroPadding = numberOfFilesStr.length;
-        }
+        //var numberOfFilesStr = "" + (numberOfFiles / numberOfBrackets);
+        //if (zeroPadding > 0 && zeroPadding < numberOfFilesStr.length)
+        //{
+        //    zeroPadding = numberOfFilesStr.length;
+        //}
 
-        for(var index = 0;  index < numberOfFiles; index++)
-        {
-            if((index % numberOfBrackets) == numberOfBrackets - 1)
-            {
-                var start = new Date();
-                progress.value = 100 * index / numberOfFiles;
-                currentFileList.push(files[index]);
-                if(userCanceled) break;
-                if(numberOfBrackets > 1)
-                {
-                    statusText.text = "Merging files "+(index-numberOfBrackets+2)+" - "+(index+1)+" of "+numberOfFiles + estTimeRemaining;
-                    //for braketed exposures use the mergeToHDR script to merge the files into a single 32 bit image
-                    mergeToHDR.outputBitDepth= 32;
-                    
-                    mergeToHDR.mergeFilesToHDR( currentFileList, mergeToHDR.useAlignment, hdrDeghosting );
-                    statusText.text = "Toning files "+(index-numberOfBrackets+2)+" - "+(index+1)+" of "+numberOfFiles+ estTimeRemaining;
-                }
-                else
-                {
-                    statusText.text = "Loading file "+(index+1)+" of "+numberOfFiles+ estTimeRemaining;
-                    //otherwise just open the file
-                    doOpenFile(files[index]);
-                    statusText.text = "Toning file "+(index+1)+" of "+numberOfFiles+ estTimeRemaining;
-                }
-                progress.value = 100 * (index + numberOfBrackets / 2 ) / numberOfFiles;
-                if(userCanceled) break;
-                try
-                {
-                    if(app.activeDocument != null && outputBitDepth < 32)
-                    {
-                        //apply the actual tone mapping to the HDR image to get it back down to 8 bits
-                        doHDRToning();
-                    }
-                }
-                catch(error)
-                {
-                    alert(error + "\nCheck number of files in source folder");
-                    break;
-                }
-                
-                //save the result and close
-                //TODO: add leading zeros to index in filename
-                
-                if(numberOfBrackets > 1)
-                {
-                    statusText.text = "Saving result "+(index-numberOfBrackets+2)+" - "+(index+1)+" of "+numberOfFiles+ estTimeRemaining;
-                }
-                else
-                {
-                    statusText.text = "Saving result "+(index+1)+" of "+numberOfFiles+ estTimeRemaining;
-                }
-                if(userCanceled) break;
-                doSaveFile(outputFolder.absoluteURI + "/" + outputFilename + ZeroPad(Math.round((index + 1)/numberOfBrackets), zeroPadding) );
-                activeDocument.close(SaveOptions.DONOTSAVECHANGES);
-                
-                //reset our file list
-                currentFileList = new Array();
-                
-                //calculate time remaining
-                var end = new Date();
-                var timeElapsed = end.getTime() - start.getTime();
-                var mins = timeElapsed / 60000 * ((numberOfFiles - index - 1) / numberOfBrackets);
-                estTimeRemaining = " | Remaining: " + ZeroPad((mins / 60).toFixed(0),2) + ":" + ZeroPad((mins % 60).toFixed(0),2);
-            }
-            else
-            {
-                currentFileList.push(files[index]);
-            }
-        }
         progressWindow.hide();
     }
 }
@@ -222,41 +232,41 @@ function doSaveFile(filename)
         activeDocument.saveAs(new File(filename), tifSaveOptions, true /*Save As Copy*/, Extension.LOWERCASE /*Append Extention*/);
     }
     else if(saveType == "Radiance")
-   	{
-   		var idsave = charIDToTypeID( "save" );
-		var desc3 = new ActionDescriptor();
-		var idAs = charIDToTypeID( "As  " );
-		desc3.putString( idAs, """Radiance""" );
-		var idIn = charIDToTypeID( "In  " );
-		desc3.putPath( idIn, new File(filename + ".hdr") );
-		var idDocI = charIDToTypeID( "DocI" );
-		desc3.putInteger( idDocI, 58 );
-		var idLwCs = charIDToTypeID( "LwCs" );
-		desc3.putBoolean( idLwCs, true );
-		var idsaveStage = stringIDToTypeID( "saveStage" );
-		var idsaveStageType = stringIDToTypeID( "saveStageType" );
-		var idsaveSucceeded = stringIDToTypeID( "saveSucceeded" );
-		desc3.putEnumerated( idsaveStage, idsaveStageType, idsaveSucceeded );
-		executeAction( idsave, desc3, DialogModes.NO );
-	}
+    {
+        var idsave = charIDToTypeID( "save" );
+        var desc3 = new ActionDescriptor();
+        var idAs = charIDToTypeID( "As  " );
+        desc3.putString( idAs, """Radiance""" );
+        var idIn = charIDToTypeID( "In  " );
+        desc3.putPath( idIn, new File(filename + ".hdr") );
+        var idDocI = charIDToTypeID( "DocI" );
+        desc3.putInteger( idDocI, 58 );
+        var idLwCs = charIDToTypeID( "LwCs" );
+        desc3.putBoolean( idLwCs, true );
+        var idsaveStage = stringIDToTypeID( "saveStage" );
+        var idsaveStageType = stringIDToTypeID( "saveStageType" );
+        var idsaveSucceeded = stringIDToTypeID( "saveSucceeded" );
+        desc3.putEnumerated( idsaveStage, idsaveStageType, idsaveSucceeded );
+        executeAction( idsave, desc3, DialogModes.NO );
+    }
     else if(saveType == "OpenEXR")
-   	{
-   		var idsave = charIDToTypeID( "save" );
-		var desc5 = new ActionDescriptor();
-		var idAs = charIDToTypeID( "As  " );
-		desc5.putString( idAs, """OpenEXR""" );
-		var idIn = charIDToTypeID( "In  " );
-		desc5.putPath( idIn, new File(filename + ".exr") );
-		var idDocI = charIDToTypeID( "DocI" );
-		desc5.putInteger( idDocI, 58 );
-		var idLwCs = charIDToTypeID( "LwCs" );
-		desc5.putBoolean( idLwCs, true );
-		var idsaveStage = stringIDToTypeID( "saveStage" );
-		var idsaveStageType = stringIDToTypeID( "saveStageType" );
-		var idsaveSucceeded = stringIDToTypeID( "saveSucceeded" );
-		desc5.putEnumerated( idsaveStage, idsaveStageType, idsaveSucceeded );
-		executeAction( idsave, desc5, DialogModes.NO );
-	}
+    {
+        var idsave = charIDToTypeID( "save" );
+        var desc5 = new ActionDescriptor();
+        var idAs = charIDToTypeID( "As  " );
+        desc5.putString( idAs, """OpenEXR""" );
+        var idIn = charIDToTypeID( "In  " );
+        desc5.putPath( idIn, new File(filename + ".exr") );
+        var idDocI = charIDToTypeID( "DocI" );
+        desc5.putInteger( idDocI, 58 );
+        var idLwCs = charIDToTypeID( "LwCs" );
+        desc5.putBoolean( idLwCs, true );
+        var idsaveStage = stringIDToTypeID( "saveStage" );
+        var idsaveStageType = stringIDToTypeID( "saveStageType" );
+        var idsaveSucceeded = stringIDToTypeID( "saveSucceeded" );
+        desc5.putEnumerated( idsaveStage, idsaveStageType, idsaveSucceeded );
+        executeAction( idsave, desc5, DialogModes.NO );
+    }
     else
     {
         activeDocument.saveAs(new File(filename), undefined, true /*Save As Copy*/, Extension.LOWERCASE /*Append Extention*/);
@@ -401,22 +411,22 @@ function promptUser()
     saveDropDown.add("item", "Radiance");
     saveDropDown.add("item", "OpenEXR");
     saveDropDown.add("item", "PSD");
-    saveDropDown.selection = 0;
+    saveDropDown.selection = 5;
     outputBitDepthDropDown.add("item", "8");
     outputBitDepthDropDown.add("item", "16");
     outputBitDepthDropDown.add("item", "32");
-    outputBitDepthDropDown.selection = 0;
+    outputBitDepthDropDown.selection = 3;
     
     var generateDeghostDropDownList = function(count)
     {
-		deghostDropDown.removeAll()
-		deghostDropDown.add("item", "Best");
-		deghostDropDown.add("item", "Off");
-		for(var i = 0; i < count; i++)
-		{
-			deghostDropDown.add("item", i);
-		}
-		deghostDropDown.selection = 0;
+        deghostDropDown.removeAll()
+        deghostDropDown.add("item", "Best");
+        deghostDropDown.add("item", "Off");
+        for(var i = 0; i < count; i++)
+        {
+            deghostDropDown.add("item", i);
+        }
+        deghostDropDown.selection = 0;
     }
     generateDeghostDropDownList(numberOfBrackets);
     
@@ -443,20 +453,20 @@ function promptUser()
     };
     bracketBox.onChange = function()
     { 
-		numberOfBrackets = bracketBox.text;
-		generateDeghostDropDownList(numberOfBrackets);
+        numberOfBrackets = bracketBox.text;
+        generateDeghostDropDownList(numberOfBrackets);
     };
     filterText.onChange = function() { fileMask = filterText.text; };
     alignCheckBox.onClick = function() { mergeToHDR.useAlignment = alignCheckBox.value; };
     deghostDropDown.onChange = function() 
     { 
-    	if(this.selection.text == "Best") 
-    		hdrDeghosting = kMergeToHDRDeghostBest;
-    	else if(this.selection.text == "Off")
-    		hdrDeghosting = kMergeToHDRDeghostOff;
-    	else
-    		hdrDeghosting = Number(this.selection.text);
-    		
+        if(this.selection.text == "Best") 
+            hdrDeghosting = kMergeToHDRDeghostBest;
+        else if(this.selection.text == "Off")
+            hdrDeghosting = kMergeToHDRDeghostOff;
+        else
+            hdrDeghosting = Number(this.selection.text);
+            
     };
     outputBox.onChange = function()
     {
